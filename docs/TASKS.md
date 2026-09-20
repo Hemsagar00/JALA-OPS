@@ -17,11 +17,11 @@
 - [x] Pump master
 
 ## Day 3 — Mobile shell
-- [ ] Navigation
-- [ ] Login UI
-- [ ] Home
-- [ ] Station/pump status
-- [ ] Sync status
+- [x] Navigation
+- [x] Login UI
+- [x] Home
+- [x] Station/pump status
+- [x] Sync status
 
 ## Day 4 — Pump operations
 - [ ] Start Pump

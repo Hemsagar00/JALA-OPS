@@ -66,6 +66,13 @@ Empty directories contain `.gitkeep` files so they are included in Git.
   - Mobile login flow with Sri Sathya Sai District branding and Expo SecureStore session persistence.
   - Web dashboard login interface with session restore and role overview.
   - 32 automated tests passing with zero lint or type errors.
+- **Milestone 3 — Mobile Shell & Operator Home (COMPLETE & VERIFIED)**:
+  - Expo Router 5-tab bottom navigation (`Home`, `Readings`, `Breakdowns`, `Tasks`, `Profile`).
+  - `SessionProvider` & hardware-backed `Expo SecureStore` session restoration, role identity, and station assignments.
+  - Operator Home screen with official Sri Sathya Sai District branding, shift calculation (Morning/Evening/Night), station switcher, today's summary metrics, live pump cards, and 6 touch-friendly field operation cards.
+  - Reusable `SyncStatusBadge` component supporting all 6 states (`ONLINE`, `OFFLINE`, `SYNCING`, `PENDING`, `SYNCED`, `ERROR`).
+  - Reusable `EmptyState` component for no-station, no-pumps, expired session, offline, and empty modules.
+  - 43 automated tests passing with zero lint or type errors across all workspaces.
 
 ## Development commands
 
