@@ -30,12 +30,12 @@
 - [x] Runtime/water/energy calculations
 
 ## Day 5 — Readings
-- [ ] Reading form
-- [ ] GPS
-- [ ] Photo upload
-- [ ] Validation
-- [ ] Offline queue
-- [ ] Idempotent sync
+- [x] Reading form
+- [x] GPS
+- [x] Photo upload
+- [x] Validation
+- [x] Offline queue
+- [x] Idempotent sync
 
 ## Day 6 — Breakdowns
 - [ ] Ticket creation

@@ -34,6 +34,13 @@ export default function RootLayout() {
             }}
           />
           <Stack.Screen
+            name="actions/enter-reading"
+            options={{
+              title: 'Record Meter Reading',
+              headerBackTitle: 'Back',
+            }}
+          />
+          <Stack.Screen
             name="actions/[action]"
             options={{
               title: 'Operational Workflow',

@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { ROLES, PUMP_STATUSES } from '@jala-ops/constants';
+import {
+  ROLES,
+  PUMP_STATUSES,
+  GPS_STATUSES,
+  READING_SOURCE_TYPES,
+  SYNC_SOURCES,
+} from '@jala-ops/constants';
 
 export const roleSchema = z.enum(ROLES);
 export const idSchema = z
@@ -154,5 +160,42 @@ export const stopPumpSchema = z
     shutdownReason: z.string().trim().min(2).max(120).optional(),
     sopResponses: z.array(sopResponseInputSchema),
     remarks: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+export const createReadingSchema = z
+  .object({
+    clientUuid: z.string().uuid(),
+    stationId: idSchema,
+    pumpId: idSchema.optional().nullable(),
+    flowMeter: z.number().nonnegative().finite(),
+    energyMeter: z.number().nonnegative().finite(),
+    inletPressure: z.number().nonnegative().finite(),
+    outletPressure: z.number().nonnegative().finite(),
+    tankLevelPct: z.number().min(0).max(100).finite(),
+    residualChlorine: z.number().nonnegative().finite().optional().nullable(),
+    turbidity: z.number().nonnegative().finite().optional().nullable(),
+    remarks: z.string().trim().max(500).optional().nullable(),
+    latitude: z.number().min(-90).max(90).finite().optional().nullable(),
+    longitude: z.number().min(-180).max(180).finite().optional().nullable(),
+    gpsAccuracyM: z.number().nonnegative().finite().optional().nullable(),
+    gpsStatus: z.enum(GPS_STATUSES).default('NOT_AVAILABLE'),
+    photoKey: z.string().trim().min(5).max(300).optional().nullable(),
+    sourceType: z.enum(READING_SOURCE_TYPES).default('MANUAL'),
+    syncSource: z.enum(SYNC_SOURCES).default('ONLINE'),
+    recordedAt: z.string().datetime().optional().nullable(),
+  })
+  .strict();
+
+export const readingQuerySchema = z
+  .object({
+    station_id: idSchema.optional(),
+    pump_id: idSchema.optional(),
+    user_id: idSchema.optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    source_type: z.enum(READING_SOURCE_TYPES).optional(),
+    limit: z.coerce.number().int().positive().max(100).default(50),
+    cursor: z.string().optional(),
   })
   .strict();

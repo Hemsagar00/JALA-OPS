@@ -14,6 +14,10 @@ import type {
   PumpOperationDetail,
   StartPumpPayload,
   StopPumpPayload,
+  StationReading,
+  StationReadingDetail,
+  CreateReadingPayload,
+  PhotoUploadResponse,
 } from '@jala-ops/types';
 import { healthSchema } from '@jala-ops/validation';
 
@@ -290,6 +294,78 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions | typ
       return request<{ operation: PumpOperationDetail | null }>(
         `/api/pumps/${pumpId}/active-operation`,
       );
+    },
+
+    // Station Readings
+    async createReading(data: CreateReadingPayload): Promise<{ reading: StationReading }> {
+      return request<{ reading: StationReading }>('/api/readings', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+
+    async listReadings(params?: {
+      stationId?: string;
+      pumpId?: string;
+      userId?: string;
+      from?: string;
+      to?: string;
+      sourceType?: string;
+      limit?: number;
+      cursor?: string;
+    }): Promise<{ readings: StationReadingDetail[] }> {
+      const query = new URLSearchParams();
+      if (params?.stationId) query.set('station_id', params.stationId);
+      if (params?.pumpId) query.set('pump_id', params.pumpId);
+      if (params?.userId) query.set('user_id', params.userId);
+      if (params?.from) query.set('from', params.from);
+      if (params?.to) query.set('to', params.to);
+      if (params?.sourceType) query.set('source_type', params.sourceType);
+      if (params?.limit) query.set('limit', String(params.limit));
+      if (params?.cursor) query.set('cursor', params.cursor);
+      const qs = query.toString() ? `?${query.toString()}` : '';
+      return request<{ readings: StationReadingDetail[] }>(`/api/readings${qs}`);
+    },
+
+    async getReading(id: string): Promise<{ reading: StationReadingDetail }> {
+      return request<{ reading: StationReadingDetail }>(`/api/readings/${id}`);
+    },
+
+    // Photos
+    async uploadPhoto(
+      stationId: string,
+      fileData: Blob | ArrayBuffer | Uint8Array,
+      contentType = 'image/jpeg',
+    ): Promise<PhotoUploadResponse> {
+      const query = new URLSearchParams({ station_id: stationId });
+      const url = `${root}/api/photos?${query.toString()}`;
+      const headers: Record<string, string> = {
+        'Content-Type': contentType,
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...(getCustomHeaders ? getCustomHeaders() : {}),
+      };
+
+      const response = await fetcher(url, {
+        method: 'POST',
+        headers,
+        body: fileData as BodyInit,
+      });
+
+      if (!response.ok) {
+        let errBody: { error?: { code?: string; message?: string } } | undefined;
+        try {
+          errBody = (await response.json()) as { error?: { code?: string; message?: string } };
+        } catch {
+          // ignore
+        }
+        throw new Error(errBody?.error?.message ?? `Upload failed (${response.status})`);
+      }
+
+      return response.json() as Promise<PhotoUploadResponse>;
+    },
+
+    getPhotoUrl(photoKey: string): string {
+      return `${root}/api/photos/${encodeURIComponent(photoKey)}`;
     },
   };
 }

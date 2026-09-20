@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { createApiClient } from '@jala-ops/api-client';
 import type { AuthMeResponse, Station, Pump } from '@jala-ops/types';
 import { getStoredToken, setStoredToken, clearStoredToken } from './session';
+import { subscribeSyncState, initSyncEngine } from './sync-engine';
 
 export type SyncState = 'ONLINE' | 'OFFLINE' | 'SYNCING' | 'PENDING' | 'SYNCED' | 'ERROR';
 
@@ -15,6 +16,7 @@ export interface AuthContextValue {
   pumpsLoading: boolean;
   pumpsError: string | null;
   syncState: SyncState;
+  pendingCount: number;
   setSyncState: (state: SyncState) => void;
   login: (me: AuthMeResponse, token?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -38,6 +40,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [pumpsLoading, setPumpsLoading] = useState(false);
   const [pumpsError, setPumpsError] = useState<string | null>(null);
   const [syncState, setSyncState] = useState<SyncState>('ONLINE');
+  const [pendingCount, setPendingCount] = useState<number>(0);
+
+  useEffect(() => {
+    initSyncEngine();
+    const unsubscribe = subscribeSyncState((info) => {
+      setSyncState(info.status);
+      setPendingCount(info.pendingCount);
+    });
+    return unsubscribe;
+  }, []);
 
   const fetchStationsForSession = useCallback(async (token: string, stationIds: string[]) => {
     try {
@@ -194,6 +206,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         pumpsLoading,
         pumpsError,
         syncState,
+        pendingCount,
         setSyncState,
         login,
         logout,

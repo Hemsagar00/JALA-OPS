@@ -100,4 +100,21 @@ Simple architecture > unnecessary complexity
   - Flow meter values are assumed to represent cubic meters ($m^3$, equivalent to kiloliters $kL$). Raw meter reading difference (`closing_flow_meter - opening_flow_meter`) represents water pumped volume in $m^3$.
   - Energy meter values are assumed to represent kilowatt-hours ($kWh$). Raw meter reading difference (`closing_energy_meter - opening_energy_meter`) represents electrical energy consumption in $kWh$.
   - Specific energy consumption is expressed in $kWh/m^3$. If water pumped is 0, specific energy is safely stored and returned as `null`.
-- **Next Milestone**: Milestone 5 (Day 5 — Readings). Offline sync queue, reading forms, GPS geolocation, and photo capture.
+- **Milestone 5 (Day 5 — Readings, GPS, Photo & Offline Sync) — COMPLETE & VERIFIED**:
+  - Implemented migration `0003_station_readings.sql` creating `station_readings` table with GPS status, source type, sync source, and indexes.
+  - Implemented secure photo upload pipeline (`POST /api/photos`, `GET /api/photos/:key`) backed by Cloudflare R2 (`PHOTOS`), validating MIME type (JPEG/PNG), size (max 10MB), and generating keys `readings/{station_id}/{YYYY}/{MM}/{uuid}.{ext}`.
+  - Implemented station readings API (`POST /api/readings`, `GET /api/readings`, `GET /api/readings/:id`) with strict station authorization, pump consistency validation, idempotent replay via `client_uuid`, and immutable audit logs.
+  - Implemented mobile offline queue architecture (`apps/mobile/src/lib/offline-db.ts`) with `expo-sqlite` and in-memory fallback for headless test/web environments.
+  - Implemented mobile sync engine (`apps/mobile/src/lib/sync-engine.ts`) with sequential processing, photo-first upload pipeline, network connectivity auto-trigger, foreground resume, and retry backoff.
+  - Implemented mobile reading form (`apps/mobile/src/app/actions/enter-reading.tsx`) with station switcher, optional pump selector, non-blocking GPS (`expo-location`), camera/gallery photo capture (`expo-image-picker`), and numeric keypads.
+  - Implemented mobile readings history screen (`apps/mobile/src/app/(tabs)/readings.tsx`) merging server readings with pending offline queue items, status badges, and manual sync CTA.
+  - Integrated live pending queue count into `SyncStatusBadge` across Home and Readings tabs.
+  - 92 automated tests across 8 test suites (100% pass); zero lint errors; all workspaces build and typecheck cleanly.
+- **Milestone 5 Permanent Decisions**:
+  - **Offline SQLite Queue**: Local table `offline_queue` persists field entries across app restarts and logout. Payloads are strictly sanitized and never contain passwords or authentication tokens.
+  - **Sync Lifecycle**: Sequential processing (`processQueue()`) avoids race conditions. Transitions: `PENDING` -> `SYNCING` -> `SYNCED` / `FAILED_RETRYABLE` / `FAILED_PERMANENT`.
+  - **Reading Timestamp Semantics**: Server `received_at` is authoritative for backend receipt time; client `recorded_at` preserves original field capture time.
+  - **GPS Non-Blocking Policy**: Field operations must never be blocked by GPS failure or permission denial. When unavailable, reading proceeds with null coordinates and `gps_status` ('NOT_AVAILABLE' or 'PERMISSION_DENIED').
+  - **Photo Storage Policy**: R2 bucket remains private. Photo keys follow `readings/{station_id}/{YYYY}/{MM}/{uuid}.{ext}`. Sync engine ensures photo is uploaded prior to reading submission so only `photo_key` is stored in D1.
+  - **Reading Idempotency**: `client_uuid` unique constraint prevents duplicate rows. Retried submissions return original reading with `idempotent: true` and produce no duplicate audit log entries.
+- **Next Milestone**: Milestone 6 (Day 6 — Breakdowns). Breakdown ticket creation, assignment, repair timeline, verification, and downtime tracking.

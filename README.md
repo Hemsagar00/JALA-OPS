@@ -81,6 +81,15 @@ Empty directories contain `.gitkeep` files so they are included in Git.
   - Mobile Start Pump 2-step workflow (`apps/mobile/src/app/actions/start-pump.tsx`) with safety checklist, opening readings, and confirmation preview.
   - Mobile Stop Pump workflow (`apps/mobile/src/app/actions/stop-pump.tsx`) with active running context, closing readings, calculation preview, and immediate pump card refresh.
   - 65 automated tests passing (100%) with zero lint or type errors across all workspaces.
+- **Milestone 5 — Readings, GPS, Photo & Offline Sync (COMPLETE & VERIFIED)**:
+  - Migration `0003_station_readings.sql` creating `station_readings` table with GPS status, source type, sync source, and indexes.
+  - Photo upload pipeline (`POST /api/photos`, `GET /api/photos/:key`) backed by Cloudflare R2 (`PHOTOS`), validating MIME type (JPEG/PNG), size (max 10MB), and generating deterministic keys `readings/{station_id}/{YYYY}/{MM}/{uuid}.{ext}`.
+  - Station Readings API (`POST /api/readings`, `GET /api/readings`, `GET /api/readings/:id`) with strict station authorization, pump consistency validation, idempotent replay via `client_uuid`, and immutable audit logs.
+  - Mobile offline SQLite queue (`offline_queue`) using `expo-sqlite` with automatic fallback for web/test environments.
+  - Resilient mobile sync engine (`apps/mobile/src/lib/sync-engine.ts`) with sequential queue processing, photo-first upload pipeline, network connectivity auto-trigger, foreground resume, and retry backoff.
+  - Mobile reading form (`apps/mobile/src/app/actions/enter-reading.tsx`) with station switcher, optional pump selector, non-blocking GPS (`expo-location`), camera/gallery photo capture (`expo-image-picker`), and numeric keypads.
+  - Mobile readings history screen (`apps/mobile/src/app/(tabs)/readings.tsx`) merging server readings with pending offline queue items, status badges, and manual sync CTA.
+  - 92 automated tests passing (100%) with zero lint or type errors across all workspaces.
 
 ## Development commands
 

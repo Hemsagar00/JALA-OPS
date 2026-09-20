@@ -30,6 +30,7 @@ export default function OperatorHomeScreen() {
     pumpsLoading,
     pumpsError,
     syncState,
+    pendingCount,
     login,
     refreshSession,
     refreshPumps,
@@ -93,7 +94,7 @@ export default function OperatorHomeScreen() {
               <Text style={styles.districtBadge}>SRI SATHYA SAI DISTRICT</Text>
               <Text style={styles.appTitle}>JALA-OPS</Text>
             </View>
-            <SyncStatusBadge state={syncState} />
+            <SyncStatusBadge state={syncState} pendingCount={pendingCount} />
           </View>
 
           <View style={styles.greetingRow}>

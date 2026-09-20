@@ -29,3 +29,11 @@ export const BRAND = {
   offline: '#7B8794',
 } as const;
 export const SESSION_TTL_SECONDS = 8 * 60 * 60;
+export const GPS_STATUSES = [
+  'CAPTURED',
+  'NOT_AVAILABLE',
+  'PERMISSION_DENIED',
+  'LOW_ACCURACY',
+] as const;
+export const READING_SOURCE_TYPES = ['MANUAL', 'SENSOR', 'SCADA', 'API'] as const;
+export const SYNC_SOURCES = ['ONLINE', 'OFFLINE_QUEUE'] as const;

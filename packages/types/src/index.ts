@@ -1,8 +1,17 @@
-import type { ROLES, PUMP_STATUSES } from '@jala-ops/constants';
+import type {
+  ROLES,
+  PUMP_STATUSES,
+  GPS_STATUSES,
+  READING_SOURCE_TYPES,
+  SYNC_SOURCES,
+} from '@jala-ops/constants';
 export type Role = (typeof ROLES)[number];
 export type PumpStatus = (typeof PUMP_STATUSES)[number];
 export type OperationType = 'START' | 'STOP';
 export type OperationStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+export type GpsStatus = (typeof GPS_STATUSES)[number];
+export type ReadingSourceType = (typeof READING_SOURCE_TYPES)[number];
+export type SyncSource = (typeof SYNC_SOURCES)[number];
 
 export interface AuthUser {
   id: string;
@@ -181,8 +190,67 @@ export interface Health {
 export interface ApiErrorBody {
   error: { code: string; message: string; requestId: string };
 }
-export interface OfflineWrite<T> {
-  client_uuid: string;
-  captured_at: string;
-  payload: T;
+export interface StationReading {
+  id: string;
+  clientUuid: string;
+  stationId: string;
+  pumpId: string | null;
+  userId: string;
+  recordedAt: string;
+  receivedAt: string;
+  flowMeter: number;
+  energyMeter: number;
+  inletPressure: number;
+  outletPressure: number;
+  tankLevelPct: number;
+  residualChlorine: number | null;
+  turbidity: number | null;
+  remarks: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  gpsAccuracyM: number | null;
+  gpsStatus: GpsStatus;
+  photoKey: string | null;
+  sourceType: ReadingSourceType;
+  syncSource: SyncSource;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+}
+
+export interface StationReadingDetail extends StationReading {
+  stationName?: string;
+  stationCode?: string;
+  pumpName?: string | null;
+  pumpCode?: string | null;
+  operatorName?: string;
+}
+
+export interface CreateReadingPayload {
+  clientUuid: string;
+  stationId: string;
+  pumpId?: string | null;
+  flowMeter: number;
+  energyMeter: number;
+  inletPressure: number;
+  outletPressure: number;
+  tankLevelPct: number;
+  residualChlorine?: number | null;
+  turbidity?: number | null;
+  remarks?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  gpsAccuracyM?: number | null;
+  gpsStatus: GpsStatus;
+  photoKey?: string | null;
+  sourceType?: ReadingSourceType;
+  syncSource?: SyncSource;
+  recordedAt?: string | null;
+}
+
+export interface PhotoUploadResponse {
+  photoKey: string;
+  url: string;
+  sizeBytes: number;
+  contentType: string;
 }

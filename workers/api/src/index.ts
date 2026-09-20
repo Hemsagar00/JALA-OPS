@@ -21,6 +21,7 @@ import {
   updatePumpSchema,
   startPumpSchema,
   stopPumpSchema,
+  createReadingSchema,
 } from '@jala-ops/validation';
 import type { Station, Pump } from '@jala-ops/types';
 
@@ -84,6 +85,8 @@ export default {
       const pumpDetailMatch = /^\/api\/pumps\/([^/]+)$/.exec(path);
       const pumpActiveOpMatch = /^\/api\/pumps\/([^/]+)\/active-operation$/.exec(path);
       const operationDetailMatch = /^\/api\/operations\/([^/]+)$/.exec(path);
+      const readingDetailMatch = /^\/api\/readings\/([^/]+)$/.exec(path);
+      const photoKeyMatch = /^\/api\/photos\/(.+)$/.exec(path);
 
       const isKnownRoute =
         path === '/api/auth/roles' ||
@@ -104,7 +107,11 @@ export default {
         path === '/api/operations' ||
         path === '/api/operations/start' ||
         path === '/api/operations/stop' ||
-        Boolean(operationDetailMatch);
+        Boolean(operationDetailMatch) ||
+        path === '/api/readings' ||
+        Boolean(readingDetailMatch) ||
+        path === '/api/photos' ||
+        Boolean(photoKeyMatch);
 
       if (!isKnownRoute) {
         return error(404, 'NOT_FOUND', 'Route not found.');
@@ -1840,6 +1847,358 @@ export default {
         return json({ operation: opDetail });
       }
 
+      // 16. Photo Upload
+      if (path === '/api/photos') {
+        if (method !== 'POST') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+
+        const stationId = url.searchParams.get('station_id') || request.headers.get('X-Station-Id');
+        if (stationId) {
+          const allowed = await canReadStation(env.DB, user, stationId);
+          if (!allowed) {
+            return error(
+              403,
+              'FORBIDDEN',
+              'You do not have access to upload photos for this station.',
+            );
+          }
+        }
+
+        const contentType = request.headers.get('Content-Type') || '';
+        if (!contentType.includes('image/jpeg') && !contentType.includes('image/png')) {
+          return error(
+            400,
+            'UNSUPPORTED_MEDIA_TYPE',
+            'Only image/jpeg and image/png are supported.',
+          );
+        }
+
+        const arrayBuffer = await request.arrayBuffer();
+        if (arrayBuffer.byteLength === 0) {
+          return error(400, 'EMPTY_FILE', 'Photo payload cannot be empty.');
+        }
+        if (arrayBuffer.byteLength > 10 * 1024 * 1024) {
+          return error(413, 'PAYLOAD_TOO_LARGE', 'Photo exceeds 10MB limit.');
+        }
+
+        const now = new Date();
+        const yyyy = now.getUTCFullYear();
+        const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+        const ext = contentType.includes('png') ? 'png' : 'jpg';
+        const photoKey = `readings/${stationId || 'general'}/${yyyy}/${mm}/${crypto.randomUUID()}.${ext}`;
+
+        await env.PHOTOS.put(photoKey, arrayBuffer, {
+          httpMetadata: { contentType: contentType.split(';')[0] },
+          customMetadata: {
+            uploaderId: user.id,
+            stationId: stationId || '',
+            uploadedAt: now.toISOString(),
+          },
+        });
+
+        return json(
+          {
+            photoKey,
+            url: `/api/photos/${encodeURIComponent(photoKey)}`,
+            sizeBytes: arrayBuffer.byteLength,
+            contentType: contentType.split(';')[0],
+          },
+          201,
+        );
+      }
+
+      // 17. Photo Streaming
+      if (photoKeyMatch && photoKeyMatch[1]) {
+        if (method !== 'GET') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+        const key = decodeURIComponent(photoKeyMatch[1]);
+        const object = await env.PHOTOS.get(key);
+        if (!object) {
+          return error(404, 'PHOTO_NOT_FOUND', 'Photo not found.');
+        }
+        const respHeaders = new Headers(headers);
+        respHeaders.set('Content-Type', object.httpMetadata?.contentType || 'image/jpeg');
+        respHeaders.set('Cache-Control', 'private, max-age=86400');
+        return new Response(object.body, { headers: respHeaders });
+      }
+
+      // 18. Create Reading
+      if (path === '/api/readings' && method === 'POST') {
+        let body: unknown;
+        try {
+          body = await request.json();
+        } catch {
+          return error(400, 'INVALID_BODY', 'Invalid JSON payload.');
+        }
+
+        const parsed = createReadingSchema.safeParse(body);
+        if (!parsed.success) {
+          return error(
+            400,
+            'VALIDATION_ERROR',
+            parsed.error.issues[0]?.message ?? 'Invalid payload.',
+          );
+        }
+        const data = parsed.data;
+
+        const allowed = await canReadStation(env.DB, user, data.stationId);
+        if (!allowed) {
+          return error(
+            403,
+            'FORBIDDEN',
+            'You do not have permission to record readings for this station.',
+          );
+        }
+
+        if (data.pumpId) {
+          const pump = await env.DB.prepare('SELECT station_id FROM pumps WHERE id = ?')
+            .bind(data.pumpId)
+            .first<{ station_id: string }>();
+          if (!pump) {
+            return error(404, 'PUMP_NOT_FOUND', 'Pump not found.');
+          }
+          if (pump.station_id !== data.stationId) {
+            return error(
+              400,
+              'INVALID_STATION_PUMP',
+              'Pump does not belong to the specified station.',
+            );
+          }
+        }
+
+        // Idempotency: if clientUuid already exists, return existing record
+        const existing = await env.DB.prepare(
+          `
+          SELECT r.*,
+                 s.name as station_name, s.code as station_code,
+                 p.name as pump_name, p.code as pump_code,
+                 u.display_name as operator_name
+          FROM station_readings r
+          JOIN stations s ON r.station_id = s.id
+          LEFT JOIN pumps p ON r.pump_id = p.id
+          JOIN users u ON r.user_id = u.id
+          WHERE r.client_uuid = ?
+        `,
+        )
+          .bind(data.clientUuid)
+          .first<Record<string, unknown>>();
+
+        if (existing) {
+          return json({ reading: mapReadingRow(existing), idempotent: true });
+        }
+
+        const now = new Date().toISOString();
+        const readingId = crypto.randomUUID();
+        const recordedAt = data.recordedAt ?? now;
+
+        await env.DB.batch([
+          env.DB.prepare(
+            `
+            INSERT INTO station_readings (
+              id, client_uuid, station_id, pump_id, user_id,
+              recorded_at, received_at, flow_meter, energy_meter,
+              inlet_pressure, outlet_pressure, tank_level_pct,
+              residual_chlorine, turbidity, remarks,
+              latitude, longitude, gps_accuracy_m, gps_status,
+              photo_key, source_type, sync_source,
+              created_at, updated_at, version
+            ) VALUES (
+              ?, ?, ?, ?, ?,
+              ?, ?, ?, ?,
+              ?, ?, ?,
+              ?, ?, ?,
+              ?, ?, ?, ?,
+              ?, ?, ?,
+              ?, ?, 1
+            )
+          `,
+          ).bind(
+            readingId,
+            data.clientUuid,
+            data.stationId,
+            data.pumpId ?? null,
+            user.id,
+            recordedAt,
+            now,
+            data.flowMeter,
+            data.energyMeter,
+            data.inletPressure,
+            data.outletPressure,
+            data.tankLevelPct,
+            data.residualChlorine ?? null,
+            data.turbidity ?? null,
+            data.remarks ?? null,
+            data.latitude ?? null,
+            data.longitude ?? null,
+            data.gpsAccuracyM ?? null,
+            data.gpsStatus,
+            data.photoKey ?? null,
+            data.sourceType ?? 'MANUAL',
+            data.syncSource ?? 'ONLINE',
+            now,
+            now,
+          ),
+          env.DB.prepare(
+            `
+            INSERT INTO audit_logs (id, actor_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at)
+            VALUES (?, ?, 'CREATE_READING', 'station_reading', ?, ?, NULL, ?, ?)
+          `,
+          ).bind(
+            crypto.randomUUID(),
+            user.id,
+            readingId,
+            requestId,
+            JSON.stringify({
+              readingId,
+              stationId: data.stationId,
+              pumpId: data.pumpId,
+              flowMeter: data.flowMeter,
+              energyMeter: data.energyMeter,
+              tankLevelPct: data.tankLevelPct,
+              gpsStatus: data.gpsStatus,
+              photoKey: data.photoKey,
+            }),
+            now,
+          ),
+        ]);
+
+        const created = await env.DB.prepare(
+          `
+          SELECT r.*,
+                 s.name as station_name, s.code as station_code,
+                 p.name as pump_name, p.code as pump_code,
+                 u.display_name as operator_name
+          FROM station_readings r
+          JOIN stations s ON r.station_id = s.id
+          LEFT JOIN pumps p ON r.pump_id = p.id
+          JOIN users u ON r.user_id = u.id
+          WHERE r.id = ?
+        `,
+        )
+          .bind(readingId)
+          .first<Record<string, unknown>>();
+
+        return json({ reading: mapReadingRow(created) }, 201);
+      }
+
+      // 19. List Readings
+      if (path === '/api/readings' && method === 'GET') {
+        const stationIdParam = url.searchParams.get('station_id');
+        const pumpIdParam = url.searchParams.get('pump_id');
+        const userIdParam = url.searchParams.get('user_id');
+        const sourceTypeParam = url.searchParams.get('source_type');
+        const fromParam = url.searchParams.get('from');
+        const toParam = url.searchParams.get('to');
+        const limitParam = Math.min(
+          100,
+          Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)),
+        );
+
+        if (stationIdParam) {
+          const allowed = await canReadStation(env.DB, user, stationIdParam);
+          if (!allowed) {
+            return error(403, 'FORBIDDEN', 'You do not have access to this station.');
+          }
+        }
+
+        const conditions: string[] = ['1=1'];
+        const bindings: unknown[] = [];
+
+        if (user.role === 'OPERATOR') {
+          const assignedIds = await getAssignedStationIds(env.DB, user);
+          if (assignedIds.length === 0) {
+            return json({ readings: [] });
+          }
+          if (stationIdParam) {
+            conditions.push('r.station_id = ?');
+            bindings.push(stationIdParam);
+          } else {
+            conditions.push(`r.station_id IN (${assignedIds.map(() => '?').join(',')})`);
+            bindings.push(...assignedIds);
+          }
+        } else if (stationIdParam) {
+          conditions.push('r.station_id = ?');
+          bindings.push(stationIdParam);
+        }
+
+        if (pumpIdParam) {
+          conditions.push('r.pump_id = ?');
+          bindings.push(pumpIdParam);
+        }
+        if (userIdParam) {
+          conditions.push('r.user_id = ?');
+          bindings.push(userIdParam);
+        }
+        if (sourceTypeParam) {
+          conditions.push('r.source_type = ?');
+          bindings.push(sourceTypeParam);
+        }
+        if (fromParam) {
+          conditions.push('r.recorded_at >= ?');
+          bindings.push(fromParam);
+        }
+        if (toParam) {
+          conditions.push('r.recorded_at <= ?');
+          bindings.push(toParam);
+        }
+
+        const query = `
+          SELECT r.*,
+                 s.name as station_name, s.code as station_code,
+                 p.name as pump_name, p.code as pump_code,
+                 u.display_name as operator_name
+          FROM station_readings r
+          JOIN stations s ON r.station_id = s.id
+          LEFT JOIN pumps p ON r.pump_id = p.id
+          JOIN users u ON r.user_id = u.id
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY r.recorded_at DESC
+          LIMIT ?
+        `;
+        bindings.push(limitParam);
+
+        const rows = await env.DB.prepare(query)
+          .bind(...bindings)
+          .all<Record<string, unknown>>();
+        return json({ readings: rows.results.map((row) => mapReadingRow(row)) });
+      }
+
+      // 20. Single Reading Detail
+      if (readingDetailMatch) {
+        if (method !== 'GET') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+        const readingId = readingDetailMatch[1];
+        const row = await env.DB.prepare(
+          `
+          SELECT r.*,
+                 s.name as station_name, s.code as station_code,
+                 p.name as pump_name, p.code as pump_code,
+                 u.display_name as operator_name
+          FROM station_readings r
+          JOIN stations s ON r.station_id = s.id
+          LEFT JOIN pumps p ON r.pump_id = p.id
+          JOIN users u ON r.user_id = u.id
+          WHERE r.id = ?
+        `,
+        )
+          .bind(readingId)
+          .first<Record<string, unknown>>();
+
+        if (!row) {
+          return error(404, 'READING_NOT_FOUND', 'Station reading not found.');
+        }
+
+        const allowed = await canReadStation(env.DB, user, row.station_id as string);
+        if (!allowed) {
+          return error(403, 'FORBIDDEN', 'You do not have access to this station reading.');
+        }
+
+        return json({ reading: mapReadingRow(row) });
+      }
+
       return error(404, 'NOT_FOUND', 'Route not found.');
     } catch {
       console.error(JSON.stringify({ requestId, code: 'INTERNAL_ERROR' }));
@@ -1934,5 +2293,48 @@ function mapPumpRow(row: Record<string, unknown> | null) {
     version: Number(row.version ?? 1),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+  };
+}
+
+function mapReadingRow(row: Record<string, unknown> | null) {
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    clientUuid: row.client_uuid as string,
+    stationId: row.station_id as string,
+    pumpId: (row.pump_id as string) ?? null,
+    userId: row.user_id as string,
+    recordedAt: row.recorded_at as string,
+    receivedAt: row.received_at as string,
+    flowMeter: Number(row.flow_meter),
+    energyMeter: Number(row.energy_meter),
+    inletPressure: Number(row.inlet_pressure),
+    outletPressure: Number(row.outlet_pressure),
+    tankLevelPct: Number(row.tank_level_pct),
+    residualChlorine:
+      row.residual_chlorine !== null && row.residual_chlorine !== undefined
+        ? Number(row.residual_chlorine)
+        : null,
+    turbidity: row.turbidity !== null && row.turbidity !== undefined ? Number(row.turbidity) : null,
+    remarks: (row.remarks as string) ?? null,
+    latitude: row.latitude !== null && row.latitude !== undefined ? Number(row.latitude) : null,
+    longitude: row.longitude !== null && row.longitude !== undefined ? Number(row.longitude) : null,
+    gpsAccuracyM:
+      row.gps_accuracy_m !== null && row.gps_accuracy_m !== undefined
+        ? Number(row.gps_accuracy_m)
+        : null,
+    gpsStatus: row.gps_status as
+      'CAPTURED' | 'NOT_AVAILABLE' | 'PERMISSION_DENIED' | 'LOW_ACCURACY',
+    photoKey: (row.photo_key as string) ?? null,
+    sourceType: row.source_type as 'MANUAL' | 'SENSOR' | 'SCADA' | 'API',
+    syncSource: row.sync_source as 'ONLINE' | 'OFFLINE_QUEUE',
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    version: Number(row.version ?? 1),
+    stationName: (row.station_name as string) ?? undefined,
+    stationCode: (row.station_code as string) ?? undefined,
+    pumpName: (row.pump_name as string) ?? null,
+    pumpCode: (row.pump_code as string) ?? null,
+    operatorName: (row.operator_name as string) ?? undefined,
   };
 }
