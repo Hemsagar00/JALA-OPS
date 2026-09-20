@@ -1,4 +1,4 @@
-﻿# JALA-OPS
+# JALA-OPS
 
 Pumping & Water Operations Monitoring System for Sri Sathya Sai District, Andhra Pradesh.
 
@@ -56,4 +56,32 @@ Empty directories contain `.gitkeep` files so they are included in Git.
 
 ## Development status
 
-This repository currently contains documentation and the initial directory structure. Application scaffolding, dependency manifests, and runnable development commands will be added during implementation.
+- **Milestone 1 — Foundation (COMPLETE & VERIFIED)**: Monorepo workspaces, Cloudflare Worker API with D1 & R2 local bindings, database migration `0001_foundation.sql`, seed fixtures, shared TypeScript packages (`constants`, `types`, `validation`, `api-client`).
+- **Milestone 2 — Authentication & Master Data (COMPLETE & VERIFIED)**:
+  - Authentication API (`/api/auth/login`, `/api/auth/logout`, `/api/auth/me`, `/api/auth/roles`).
+  - Scrypt password hashing, 8-hour D1 sessions, HttpOnly cookies for web, Bearer tokens for mobile.
+  - Server-side authorization helpers enforcing strict role-based access.
+  - User administration (`/api/users`) and station assignments (`/api/users/:id/assignments`).
+  - Station Master (`/api/stations`) and Pump Master (`/api/pumps`) with optimistic versioning and immutable audit logging.
+  - Mobile login flow with Sri Sathya Sai District branding and Expo SecureStore session persistence.
+  - Web dashboard login interface with session restore and role overview.
+  - 32 automated tests passing with zero lint or type errors.
+
+## Development commands
+
+```bash
+# Run type checks across all workspaces
+npm run typecheck
+
+# Run linter
+npm run lint
+
+# Check formatting
+npm run format:check
+
+# Run automated tests
+npm test
+
+# Build production bundles
+npm run build
+```

@@ -10,11 +10,11 @@
 - [x] Roles
 
 ## Day 2 — Auth & Masters
-- [ ] Login
-- [ ] Sessions/tokens
-- [ ] Users/roles/assignments
-- [ ] Station master
-- [ ] Pump master
+- [x] Login
+- [x] Sessions/tokens
+- [x] Users/roles/assignments
+- [x] Station master
+- [x] Pump master
 
 ## Day 3 — Mobile shell
 - [ ] Navigation

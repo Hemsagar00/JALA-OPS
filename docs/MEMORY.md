@@ -63,9 +63,18 @@ Simple architecture > unnecessary complexity
   - Scrypt password hashing & session management foundation in place.
   - Mobile Expo SDK 57 & Vite web applications with connection health verification screens.
   - 17 unit/integration tests passing; zero lint errors; all workspaces build and typecheck cleanly.
-- **Milestone 2 (Day 2 — Auth & Masters)**: In progress.
-  - Login endpoint (`POST /api/auth/login`) and session creation.
-  - Logout endpoint (`POST /api/auth/logout`) and revocation.
-  - User and station assignment administration.
-  - Station master and Pump master management endpoints.
-
+- **Milestone 2 — COMPLETE & VERIFIED**:
+  - Implemented `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `GET /api/auth/roles`.
+  - Passwords hashed with `scrypt` with 16-byte individual random salts and constant-time verification.
+  - Sessions issued with 8-hour TTL, hashed with SHA-256 before storage in D1, revocable via `/api/auth/logout`.
+  - Web client uses HttpOnly, Secure, SameSite=Strict `__Host-jala_session` cookie; mobile uses Bearer token with `expo-secure-store`.
+  - Implemented user administration: `GET/POST /api/users`, `GET/PATCH /api/users/:id` with strict role validation and password presence checks on user activation.
+  - Implemented station assignments: `GET/POST /api/users/:id/assignments`, `DELETE /api/users/:id/assignments/:stationId`.
+  - Implemented station master (`GET/POST /api/stations`, `GET/PATCH /api/stations/:id`) and pump master (`GET/POST /api/pumps`, `GET/PATCH /api/pumps/:id`, `GET /api/stations/:id/pumps`) with optimistic versioning.
+  - All mutations write immutable audit records to `audit_logs`.
+  - Built mobile login screen with Sri Sathya Sai District branding, secure token storage, and session restore.
+  - Built web login interface with session restore, role badges, and logout flow.
+  - 32 automated tests in 4 suites (100% pass); zero lint errors; all 7 workspaces build and typecheck cleanly.
+- **Milestone 3 (Day 3 — Mobile Shell)**: Next milestone.
+  - Tab navigation (Home, Readings, Breakdowns, Tasks, Profile).
+  - Home screen with station & shift info, pump status cards, and sync queue indicator.

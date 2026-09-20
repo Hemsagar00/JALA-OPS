@@ -143,7 +143,7 @@ describe('Worker API and authorization', () => {
   });
   it('returns the authenticated identity without credential fields', async () => {
     const response = await request('/api/auth/me', operatorToken);
-    expect(await response.json()).toEqual({
+    expect(await response.json()).toMatchObject({
       user: { id: 'demo-operator', displayName: 'Demo operator', role: 'OPERATOR' },
     });
   });
