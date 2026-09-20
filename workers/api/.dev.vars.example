@@ -1,0 +1,2 @@
+# Local secrets belong in .dev.vars (ignored by Git).
+# No shared secret or default user password is needed by the foundation.

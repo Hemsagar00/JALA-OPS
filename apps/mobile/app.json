@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "version": "0.1.0",
+    "scheme": "jalaops",
+    "plugins": ["expo-router"],
+    "android": {
+      "package": "in.jalaops.mobile"
+    },
+    "name": "JALA-OPS",
+    "userInterfaceStyle": "light",
+    "slug": "jala-ops",
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    }
+  }
+}

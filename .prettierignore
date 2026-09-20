@@ -1,0 +1,16 @@
+node_modules
+dist
+.expo
+.wrangler
+.artifacts
+.agents
+.claude
+package-lock.json
+skills-lock.json
+docs/PRD.md
+docs/ARCHITECTURE.md
+docs/RULES.md
+docs/DESIGN.md
+docs/TASKS.md
+apps/mobile/CLAUDE.md
+apps/mobile/LICENSE

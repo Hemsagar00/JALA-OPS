@@ -1,0 +1,17 @@
+{
+  "name": "@jala-ops/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@jala-ops/api-client": "0.1.0",
+    "@jala-ops/constants": "0.1.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}

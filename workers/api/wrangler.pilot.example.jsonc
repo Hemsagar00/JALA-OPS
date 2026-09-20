@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "jala-ops-api-pilot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "vars": { "APP_ENV": "pilot", "ALLOWED_ORIGINS": "https://REPLACE_WITH_PILOT_HOSTNAME" },
+  "routes": [{ "pattern": "REPLACE_WITH_PILOT_HOSTNAME/api/*", "zone_name": "REPLACE_WITH_ZONE" }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jala-ops-pilot",
+      "database_id": "REPLACE_WITH_D1_ID",
+      "migrations_dir": "../../database/migrations",
+    },
+  ],
+  "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "jala-ops-photos-pilot" }],
+  "observability": { "enabled": true },
+}
