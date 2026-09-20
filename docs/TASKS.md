@@ -24,10 +24,10 @@
 - [x] Sync status
 
 ## Day 4 — Pump operations
-- [ ] Start Pump
-- [ ] Stop Pump
-- [ ] SOP checklist
-- [ ] Runtime/water/energy calculations
+- [x] Start Pump
+- [x] Stop Pump
+- [x] SOP checklist
+- [x] Runtime/water/energy calculations
 
 ## Day 5 — Readings
 - [ ] Reading form

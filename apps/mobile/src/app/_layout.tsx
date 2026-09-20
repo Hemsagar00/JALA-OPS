@@ -20,6 +20,20 @@ export default function RootLayout() {
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
+            name="actions/start-pump"
+            options={{
+              title: 'Start Pump Procedure',
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
+            name="actions/stop-pump"
+            options={{
+              title: 'Stop Pump Procedure',
+              headerBackTitle: 'Home',
+            }}
+          />
+          <Stack.Screen
             name="actions/[action]"
             options={{
               title: 'Operational Workflow',

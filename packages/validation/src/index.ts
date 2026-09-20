@@ -110,8 +110,49 @@ export const healthSchema = z.object({
 });
 export const offlineEnvelopeSchema = z
   .object({
-    client_uuid: z.uuid(),
-    captured_at: z.iso.datetime(),
+    client_uuid: z.string().uuid(),
+    captured_at: z.string().datetime(),
     payload: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export const sopResponseInputSchema = z
+  .object({
+    sopItemId: idSchema,
+    response: z
+      .union([z.boolean(), z.number().int().min(0).max(1)])
+      .transform((v) => (typeof v === 'boolean' ? (v ? 1 : 0) : v)),
+    remarks: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+export const startPumpSchema = z
+  .object({
+    clientUuid: z.string().uuid(),
+    stationId: idSchema,
+    pumpId: idSchema,
+    openingFlowMeter: z.number().nonnegative().finite(),
+    openingEnergyMeter: z.number().nonnegative().finite(),
+    inletPressure: z.number().finite().optional(),
+    outletPressure: z.number().finite().optional(),
+    tankLevel: z.number().min(0).max(100).finite().optional(),
+    sopResponses: z.array(sopResponseInputSchema),
+    remarks: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+export const stopPumpSchema = z
+  .object({
+    clientUuid: z.string().uuid(),
+    stationId: idSchema,
+    pumpId: idSchema,
+    closingFlowMeter: z.number().nonnegative().finite(),
+    closingEnergyMeter: z.number().nonnegative().finite(),
+    inletPressure: z.number().finite().optional(),
+    outletPressure: z.number().finite().optional(),
+    tankLevel: z.number().min(0).max(100).finite().optional(),
+    shutdownReason: z.string().trim().min(2).max(120).optional(),
+    sopResponses: z.array(sopResponseInputSchema),
+    remarks: z.string().trim().max(500).optional(),
   })
   .strict();

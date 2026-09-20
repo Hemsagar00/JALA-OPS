@@ -9,6 +9,11 @@ import type {
   PumpDetail,
   UserRecord,
   StationAssignment,
+  SopTemplateWithItems,
+  PumpOperation,
+  PumpOperationDetail,
+  StartPumpPayload,
+  StopPumpPayload,
 } from '@jala-ops/types';
 import { healthSchema } from '@jala-ops/validation';
 
@@ -233,6 +238,58 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions | typ
         method: 'PATCH',
         body: JSON.stringify(data),
       });
+    },
+
+    // SOP
+    async listSopTemplates(
+      operationType?: 'START' | 'STOP',
+    ): Promise<{ templates: SopTemplateWithItems[] }> {
+      const query = operationType ? `?operation_type=${operationType}` : '';
+      return request<{ templates: SopTemplateWithItems[] }>(`/api/sop/templates${query}`);
+    },
+
+    // Pump Operations
+    async startPump(data: StartPumpPayload): Promise<{ operation: PumpOperation; pump: Pump }> {
+      return request<{ operation: PumpOperation; pump: Pump }>('/api/operations/start', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+
+    async stopPump(data: StopPumpPayload): Promise<{ operation: PumpOperation; pump: Pump }> {
+      return request<{ operation: PumpOperation; pump: Pump }>('/api/operations/stop', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+
+    async listOperations(params?: {
+      stationId?: string;
+      pumpId?: string;
+      status?: string;
+      from?: string;
+      to?: string;
+    }): Promise<{ operations: PumpOperationDetail[] }> {
+      const query = new URLSearchParams();
+      if (params?.stationId) query.set('station_id', params.stationId);
+      if (params?.pumpId) query.set('pump_id', params.pumpId);
+      if (params?.status) query.set('status', params.status);
+      if (params?.from) query.set('from', params.from);
+      if (params?.to) query.set('to', params.to);
+      const qs = query.toString() ? `?${query.toString()}` : '';
+      return request<{ operations: PumpOperationDetail[] }>(`/api/operations${qs}`);
+    },
+
+    async getOperation(id: string): Promise<{ operation: PumpOperationDetail }> {
+      return request<{ operation: PumpOperationDetail }>(`/api/operations/${id}`);
+    },
+
+    async getActivePumpOperation(
+      pumpId: string,
+    ): Promise<{ operation: PumpOperationDetail | null }> {
+      return request<{ operation: PumpOperationDetail | null }>(
+        `/api/pumps/${pumpId}/active-operation`,
+      );
     },
   };
 }

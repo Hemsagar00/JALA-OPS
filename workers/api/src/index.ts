@@ -19,6 +19,8 @@ import {
   updateStationSchema,
   createPumpSchema,
   updatePumpSchema,
+  startPumpSchema,
+  stopPumpSchema,
 } from '@jala-ops/validation';
 import type { Station, Pump } from '@jala-ops/types';
 
@@ -80,6 +82,8 @@ export default {
       const stationDetailMatch = /^\/api\/stations\/([^/]+)$/.exec(path);
       const pumpsForStationMatch = /^\/api\/stations\/([^/]+)\/pumps$/.exec(path);
       const pumpDetailMatch = /^\/api\/pumps\/([^/]+)$/.exec(path);
+      const pumpActiveOpMatch = /^\/api\/pumps\/([^/]+)\/active-operation$/.exec(path);
+      const operationDetailMatch = /^\/api\/operations\/([^/]+)$/.exec(path);
 
       const isKnownRoute =
         path === '/api/auth/roles' ||
@@ -94,7 +98,13 @@ export default {
         Boolean(stationDetailMatch) ||
         Boolean(pumpsForStationMatch) ||
         path === '/api/pumps' ||
-        Boolean(pumpDetailMatch);
+        Boolean(pumpDetailMatch) ||
+        Boolean(pumpActiveOpMatch) ||
+        path === '/api/sop/templates' ||
+        path === '/api/operations' ||
+        path === '/api/operations/start' ||
+        path === '/api/operations/stop' ||
+        Boolean(operationDetailMatch);
 
       if (!isKnownRoute) {
         return error(404, 'NOT_FOUND', 'Route not found.');
@@ -1137,6 +1147,699 @@ export default {
         return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
       }
 
+      // 10. Active Pump Operation
+      if (pumpActiveOpMatch) {
+        if (method !== 'GET') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+        const pumpId = pumpActiveOpMatch[1];
+        const pump = await env.DB.prepare('SELECT station_id FROM pumps WHERE id = ?')
+          .bind(pumpId)
+          .first<{ station_id: string }>();
+        if (!pump) {
+          return error(404, 'PUMP_NOT_FOUND', 'Pump not found.');
+        }
+        const allowed = await canReadStation(env.DB, user, pump.station_id);
+        if (!allowed) {
+          return error(403, 'FORBIDDEN', 'You do not have access to this station.');
+        }
+        const row = await env.DB.prepare(
+          'SELECT * FROM pump_operations WHERE pump_id = ? AND status = "ACTIVE" LIMIT 1',
+        )
+          .bind(pumpId)
+          .first<Record<string, unknown>>();
+        return json({ operation: row ? mapOperationRow(row) : null });
+      }
+
+      // 11. SOP Templates
+      if (path === '/api/sop/templates') {
+        if (method !== 'GET') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+        const opType = url.searchParams.get('operation_type');
+        let tplQuery =
+          'SELECT id, name, operation_type, active, created_at, updated_at FROM sop_templates WHERE active = 1';
+        const bindings: string[] = [];
+        if (opType) {
+          tplQuery += ' AND operation_type = ?';
+          bindings.push(opType);
+        }
+        const templatesResult = await env.DB.prepare(tplQuery)
+          .bind(...bindings)
+          .all<{
+            id: string;
+            name: string;
+            operation_type: 'START' | 'STOP';
+            active: number;
+            created_at: string;
+            updated_at: string;
+          }>();
+
+        const templatesWithItems = [];
+        for (const t of templatesResult.results) {
+          const items = await env.DB.prepare(
+            'SELECT id, template_id, sequence_no, label, required, active FROM sop_items WHERE template_id = ? AND active = 1 ORDER BY sequence_no ASC',
+          )
+            .bind(t.id)
+            .all<{
+              id: string;
+              template_id: string;
+              sequence_no: number;
+              label: string;
+              required: number;
+              active: number;
+            }>();
+
+          templatesWithItems.push({
+            id: t.id,
+            name: t.name,
+            operationType: t.operation_type,
+            active: Boolean(t.active),
+            createdAt: t.created_at,
+            updatedAt: t.updated_at,
+            items: items.results.map((i) => ({
+              id: i.id,
+              templateId: i.template_id,
+              sequenceNo: i.sequence_no,
+              label: i.label,
+              required: Boolean(i.required),
+              active: Boolean(i.active),
+            })),
+          });
+        }
+
+        return json({ templates: templatesWithItems });
+      }
+
+      // 12. Start Pump Operation
+      if (path === '/api/operations/start') {
+        if (method !== 'POST') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+
+        let body: unknown;
+        try {
+          body = await request.json();
+        } catch {
+          return error(400, 'INVALID_BODY', 'Invalid JSON payload.');
+        }
+
+        const parsed = startPumpSchema.safeParse(body);
+        if (!parsed.success) {
+          return error(
+            400,
+            'VALIDATION_ERROR',
+            parsed.error.issues[0]?.message ?? 'Invalid payload.',
+          );
+        }
+        const data = parsed.data;
+
+        if (user.role === 'COLLECTOR') {
+          return error(403, 'FORBIDDEN', 'Collector role has read-only access to pump operations.');
+        }
+
+        const allowed = await canReadStation(env.DB, user, data.stationId);
+        if (!allowed) {
+          return error(
+            403,
+            'FORBIDDEN',
+            'You do not have permission to operate pumps at this station.',
+          );
+        }
+
+        // Idempotency: if clientUuid already exists in pump_operations
+        const existingOp = await env.DB.prepare(
+          'SELECT * FROM pump_operations WHERE client_uuid = ?',
+        )
+          .bind(data.clientUuid)
+          .first<Record<string, unknown>>();
+
+        if (existingOp) {
+          const currentPump = await env.DB.prepare('SELECT * FROM pumps WHERE id = ?')
+            .bind(data.pumpId)
+            .first<Record<string, unknown>>();
+          return json({
+            operation: mapOperationRow(existingOp),
+            pump: mapPumpRow(currentPump),
+            idempotent: true,
+          });
+        }
+
+        const pump = await env.DB.prepare('SELECT * FROM pumps WHERE id = ?')
+          .bind(data.pumpId)
+          .first<{
+            id: string;
+            station_id: string;
+            code: string;
+            name: string;
+            rated_power_kw: number;
+            capacity_m3_h: number;
+            status: string;
+            active: number;
+            version: number;
+          }>();
+
+        if (!pump || !pump.active) {
+          return error(404, 'PUMP_NOT_FOUND', 'Pump not found or inactive.');
+        }
+        if (pump.station_id !== data.stationId) {
+          return error(
+            400,
+            'INVALID_STATION_PUMP',
+            'Pump does not belong to the specified station.',
+          );
+        }
+        if (pump.status === 'RUNNING') {
+          return error(409, 'PUMP_ALREADY_RUNNING', 'Pump is already running.');
+        }
+        if (pump.status === 'BREAKDOWN') {
+          return error(
+            409,
+            'PUMP_IN_BREAKDOWN',
+            'Pump is marked under breakdown and cannot be started.',
+          );
+        }
+        if (pump.status === 'MAINTENANCE') {
+          return error(409, 'PUMP_IN_MAINTENANCE', 'Pump is marked under maintenance.');
+        }
+
+        // Check required SOP items for START
+        const requiredSopItems = await env.DB.prepare(
+          `
+          SELECT i.id, i.label
+          FROM sop_items i
+          JOIN sop_templates t ON i.template_id = t.id
+          WHERE t.operation_type = 'START' AND t.active = 1 AND i.required = 1 AND i.active = 1
+        `,
+        ).all<{ id: string; label: string }>();
+
+        for (const item of requiredSopItems.results) {
+          const resp = data.sopResponses.find((r) => r.sopItemId === item.id);
+          if (!resp || resp.response !== 1) {
+            return error(
+              400,
+              'INCOMPLETE_SOP',
+              `Required SOP checklist item '${item.label}' must be confirmed before start.`,
+            );
+          }
+        }
+
+        const opId = 'op_' + crypto.randomUUID();
+        const now = new Date().toISOString();
+
+        const batchStatements = [
+          env.DB.prepare(
+            `
+            INSERT INTO pump_operations (
+              id, client_uuid, station_id, pump_id, user_id,
+              operation_type, status, started_at,
+              opening_flow_meter, opening_energy_meter,
+              inlet_pressure_start, outlet_pressure_start, tank_level_start,
+              remarks, version, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'START', 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+          `,
+          ).bind(
+            opId,
+            data.clientUuid,
+            data.stationId,
+            data.pumpId,
+            user.id,
+            now,
+            data.openingFlowMeter,
+            data.openingEnergyMeter,
+            data.inletPressure ?? null,
+            data.outletPressure ?? null,
+            data.tankLevel ?? null,
+            data.remarks ?? null,
+            now,
+            now,
+          ),
+          env.DB.prepare(
+            `
+            UPDATE pumps
+            SET status = 'RUNNING', version = version + 1, updated_at = ?
+            WHERE id = ? AND status = 'STOPPED'
+          `,
+          ).bind(now, data.pumpId),
+          env.DB.prepare(
+            `
+            INSERT INTO audit_logs (id, actor_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at)
+            VALUES (?, ?, 'START_PUMP', 'pump_operation', ?, ?, NULL, ?, ?)
+          `,
+          ).bind(
+            crypto.randomUUID(),
+            user.id,
+            opId,
+            requestId,
+            JSON.stringify({
+              operationId: opId,
+              pumpId: data.pumpId,
+              stationId: data.stationId,
+              openingFlowMeter: data.openingFlowMeter,
+              openingEnergyMeter: data.openingEnergyMeter,
+            }),
+            now,
+          ),
+        ];
+
+        for (const r of data.sopResponses) {
+          batchStatements.push(
+            env.DB.prepare(
+              `
+              INSERT INTO sop_responses (id, operation_id, sop_item_id, response, remarks, created_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            ).bind(
+              'sopr_' + crypto.randomUUID(),
+              opId,
+              r.sopItemId,
+              r.response,
+              r.remarks ?? null,
+              now,
+            ),
+          );
+        }
+
+        await env.DB.batch(batchStatements);
+
+        const createdOp = await env.DB.prepare('SELECT * FROM pump_operations WHERE id = ?')
+          .bind(opId)
+          .first<Record<string, unknown>>();
+        const updatedPump = await env.DB.prepare('SELECT * FROM pumps WHERE id = ?')
+          .bind(data.pumpId)
+          .first<Record<string, unknown>>();
+
+        return json(
+          {
+            operation: mapOperationRow(createdOp),
+            pump: mapPumpRow(updatedPump),
+          },
+          201,
+        );
+      }
+
+      // 13. Stop Pump Operation
+      if (path === '/api/operations/stop') {
+        if (method !== 'POST') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+
+        let body: unknown;
+        try {
+          body = await request.json();
+        } catch {
+          return error(400, 'INVALID_BODY', 'Invalid JSON payload.');
+        }
+
+        const parsed = stopPumpSchema.safeParse(body);
+        if (!parsed.success) {
+          return error(
+            400,
+            'VALIDATION_ERROR',
+            parsed.error.issues[0]?.message ?? 'Invalid payload.',
+          );
+        }
+        const data = parsed.data;
+
+        if (user.role === 'COLLECTOR') {
+          return error(403, 'FORBIDDEN', 'Collector role has read-only access to pump operations.');
+        }
+
+        const allowed = await canReadStation(env.DB, user, data.stationId);
+        if (!allowed) {
+          return error(
+            403,
+            'FORBIDDEN',
+            'You do not have permission to operate pumps at this station.',
+          );
+        }
+
+        // Idempotency: if clientUuid exists in pump_operations with status COMPLETED
+        const existingOp = await env.DB.prepare(
+          'SELECT * FROM pump_operations WHERE client_uuid = ? AND status = "COMPLETED"',
+        )
+          .bind(data.clientUuid)
+          .first<Record<string, unknown>>();
+
+        if (existingOp) {
+          const currentPump = await env.DB.prepare('SELECT * FROM pumps WHERE id = ?')
+            .bind(data.pumpId)
+            .first<Record<string, unknown>>();
+          return json({
+            operation: mapOperationRow(existingOp),
+            pump: mapPumpRow(currentPump),
+            idempotent: true,
+          });
+        }
+
+        const pump = await env.DB.prepare('SELECT * FROM pumps WHERE id = ?')
+          .bind(data.pumpId)
+          .first<{
+            id: string;
+            station_id: string;
+            status: string;
+            active: number;
+            version: number;
+          }>();
+
+        if (!pump || !pump.active) {
+          return error(404, 'PUMP_NOT_FOUND', 'Pump not found or inactive.');
+        }
+        if (pump.status !== 'RUNNING') {
+          return error(409, 'PUMP_NOT_RUNNING', 'Pump is not currently running.');
+        }
+
+        const activeOp = await env.DB.prepare(
+          `
+          SELECT * FROM pump_operations
+          WHERE pump_id = ? AND status = 'ACTIVE'
+          LIMIT 1
+        `,
+        )
+          .bind(data.pumpId)
+          .first<{
+            id: string;
+            started_at: string;
+            opening_flow_meter: number;
+            opening_energy_meter: number;
+            station_id: string;
+            version: number;
+          }>();
+
+        if (!activeOp) {
+          return error(
+            400,
+            'NO_ACTIVE_OPERATION',
+            'No active running operation found for this pump.',
+          );
+        }
+
+        if (data.closingFlowMeter < activeOp.opening_flow_meter) {
+          return error(
+            400,
+            'INVALID_METER_READING',
+            `Closing flow meter (${data.closingFlowMeter}) cannot be less than opening flow meter (${activeOp.opening_flow_meter}).`,
+          );
+        }
+        if (data.closingEnergyMeter < activeOp.opening_energy_meter) {
+          return error(
+            400,
+            'INVALID_METER_READING',
+            `Closing energy meter (${data.closingEnergyMeter}) cannot be less than opening energy meter (${activeOp.opening_energy_meter}).`,
+          );
+        }
+
+        // Check required Stop SOP items
+        const requiredSopItems = await env.DB.prepare(
+          `
+          SELECT i.id, i.label
+          FROM sop_items i
+          JOIN sop_templates t ON i.template_id = t.id
+          WHERE t.operation_type = 'STOP' AND t.active = 1 AND i.required = 1 AND i.active = 1
+        `,
+        ).all<{ id: string; label: string }>();
+
+        for (const item of requiredSopItems.results) {
+          const resp = data.sopResponses.find((r) => r.sopItemId === item.id);
+          if (!resp || resp.response !== 1) {
+            return error(
+              400,
+              'INCOMPLETE_SOP',
+              `Required Stop SOP checklist item '${item.label}' must be confirmed before stopping pump.`,
+            );
+          }
+        }
+
+        const now = new Date().toISOString();
+        const startMs = new Date(activeOp.started_at).getTime();
+        const stopMs = new Date(now).getTime();
+        const runningDurationSeconds = Math.max(0, Math.round((stopMs - startMs) / 1000));
+        const waterPumped = Number(
+          (data.closingFlowMeter - activeOp.opening_flow_meter).toFixed(3),
+        );
+        const energyUsedKwh = Number(
+          (data.closingEnergyMeter - activeOp.opening_energy_meter).toFixed(3),
+        );
+        const energyPerUnit =
+          waterPumped > 0 ? Number((energyUsedKwh / waterPumped).toFixed(4)) : null;
+
+        const batchStatements = [
+          env.DB.prepare(
+            `
+            UPDATE pump_operations
+            SET status = 'COMPLETED',
+                stopped_at = ?,
+                closing_flow_meter = ?,
+                closing_energy_meter = ?,
+                inlet_pressure_stop = ?,
+                outlet_pressure_stop = ?,
+                tank_level_stop = ?,
+                shutdown_reason = ?,
+                remarks = coalesce(?, remarks),
+                running_duration_seconds = ?,
+                water_pumped = ?,
+                energy_used_kwh = ?,
+                energy_per_unit = ?,
+                version = version + 1,
+                updated_at = ?
+            WHERE id = ? AND status = 'ACTIVE'
+          `,
+          ).bind(
+            now,
+            data.closingFlowMeter,
+            data.closingEnergyMeter,
+            data.inletPressure ?? null,
+            data.outletPressure ?? null,
+            data.tankLevel ?? null,
+            data.shutdownReason ?? null,
+            data.remarks ?? null,
+            runningDurationSeconds,
+            waterPumped,
+            energyUsedKwh,
+            energyPerUnit,
+            now,
+            activeOp.id,
+          ),
+          env.DB.prepare(
+            `
+            UPDATE pumps
+            SET status = 'STOPPED', version = version + 1, updated_at = ?
+            WHERE id = ? AND status = 'RUNNING'
+          `,
+          ).bind(now, data.pumpId),
+          env.DB.prepare(
+            `
+            INSERT INTO audit_logs (id, actor_id, action, entity_type, entity_id, request_id, before_json, after_json, created_at)
+            VALUES (?, ?, 'STOP_PUMP', 'pump_operation', ?, ?, ?, ?, ?)
+          `,
+          ).bind(
+            crypto.randomUUID(),
+            user.id,
+            activeOp.id,
+            requestId,
+            JSON.stringify({
+              operationId: activeOp.id,
+              pumpId: data.pumpId,
+              openingFlowMeter: activeOp.opening_flow_meter,
+              openingEnergyMeter: activeOp.opening_energy_meter,
+            }),
+            JSON.stringify({
+              operationId: activeOp.id,
+              pumpId: data.pumpId,
+              closingFlowMeter: data.closingFlowMeter,
+              closingEnergyMeter: data.closingEnergyMeter,
+              runningDurationSeconds,
+              waterPumped,
+              energyUsedKwh,
+              energyPerUnit,
+              shutdownReason: data.shutdownReason,
+            }),
+            now,
+          ),
+        ];
+
+        for (const r of data.sopResponses) {
+          batchStatements.push(
+            env.DB.prepare(
+              `
+              INSERT INTO sop_responses (id, operation_id, sop_item_id, response, remarks, created_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `,
+            ).bind(
+              'sopr_' + crypto.randomUUID(),
+              activeOp.id,
+              r.sopItemId,
+              r.response,
+              r.remarks ?? null,
+              now,
+            ),
+          );
+        }
+
+        await env.DB.batch(batchStatements);
+
+        const completedOp = await env.DB.prepare('SELECT * FROM pump_operations WHERE id = ?')
+          .bind(activeOp.id)
+          .first<Record<string, unknown>>();
+        const updatedPump = await env.DB.prepare('SELECT * FROM pumps WHERE id = ?')
+          .bind(data.pumpId)
+          .first<Record<string, unknown>>();
+
+        return json({
+          operation: mapOperationRow(completedOp),
+          pump: mapPumpRow(updatedPump),
+          calculations: {
+            runningDurationSeconds,
+            waterPumpedM3: waterPumped,
+            energyUsedKwh,
+            specificEnergyKwhPerM3: energyPerUnit,
+          },
+        });
+      }
+
+      // 14. List Operations
+      if (path === '/api/operations') {
+        if (method !== 'GET') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+
+        const stationIdParam = url.searchParams.get('station_id');
+        const pumpIdParam = url.searchParams.get('pump_id');
+        const statusParam = url.searchParams.get('status');
+        const fromParam = url.searchParams.get('from');
+        const toParam = url.searchParams.get('to');
+
+        // Check station access if specified
+        if (stationIdParam) {
+          const allowed = await canReadStation(env.DB, user, stationIdParam);
+          if (!allowed) {
+            return error(403, 'FORBIDDEN', 'You do not have access to this station.');
+          }
+        }
+
+        const conditions: string[] = ['1=1'];
+        const bindings: unknown[] = [];
+
+        // If operator and no stationIdParam provided, limit to assigned stations
+        if (user.role === 'OPERATOR') {
+          const assignedIds = await getAssignedStationIds(env.DB, user);
+          if (assignedIds.length === 0) {
+            return json({ operations: [] });
+          }
+          if (stationIdParam) {
+            conditions.push('o.station_id = ?');
+            bindings.push(stationIdParam);
+          } else {
+            conditions.push(`o.station_id IN (${assignedIds.map(() => '?').join(',')})`);
+            bindings.push(...assignedIds);
+          }
+        } else if (stationIdParam) {
+          conditions.push('o.station_id = ?');
+          bindings.push(stationIdParam);
+        }
+
+        if (pumpIdParam) {
+          conditions.push('o.pump_id = ?');
+          bindings.push(pumpIdParam);
+        }
+        if (statusParam) {
+          conditions.push('o.status = ?');
+          bindings.push(statusParam);
+        }
+        if (fromParam) {
+          conditions.push('o.started_at >= ?');
+          bindings.push(fromParam);
+        }
+        if (toParam) {
+          conditions.push('o.started_at <= ?');
+          bindings.push(toParam);
+        }
+
+        const query = `
+          SELECT o.*,
+                 p.code as pump_code, p.name as pump_name,
+                 s.name as station_name,
+                 u.display_name as operator_name
+          FROM pump_operations o
+          JOIN pumps p ON o.pump_id = p.id
+          JOIN stations s ON o.station_id = s.id
+          JOIN users u ON o.user_id = u.id
+          WHERE ${conditions.join(' AND ')}
+          ORDER BY o.started_at DESC
+          LIMIT 100
+        `;
+
+        const ops = await env.DB.prepare(query)
+          .bind(...bindings)
+          .all<Record<string, unknown>>();
+        return json({
+          operations: ops.results.map((r) => mapOperationRow(r)),
+        });
+      }
+
+      // 15. Single Operation Detail
+      if (operationDetailMatch) {
+        if (method !== 'GET') {
+          return error(405, 'METHOD_NOT_ALLOWED', 'Method is not supported.');
+        }
+        const opId = operationDetailMatch[1];
+        const row = await env.DB.prepare(
+          `
+          SELECT o.*,
+                 p.code as pump_code, p.name as pump_name,
+                 s.name as station_name,
+                 u.display_name as operator_name
+          FROM pump_operations o
+          JOIN pumps p ON o.pump_id = p.id
+          JOIN stations s ON o.station_id = s.id
+          JOIN users u ON o.user_id = u.id
+          WHERE o.id = ?
+        `,
+        )
+          .bind(opId)
+          .first<Record<string, unknown>>();
+
+        if (!row) {
+          return error(404, 'OPERATION_NOT_FOUND', 'Operation not found.');
+        }
+
+        const allowed = await canReadStation(env.DB, user, row.station_id as string);
+        if (!allowed) {
+          return error(403, 'FORBIDDEN', 'You do not have access to this station operation.');
+        }
+
+        const sopResponses = await env.DB.prepare(
+          `
+          SELECT r.id, r.operation_id, r.sop_item_id, r.response, r.remarks, r.created_at
+          FROM sop_responses r
+          WHERE r.operation_id = ?
+        `,
+        )
+          .bind(opId)
+          .all<{
+            id: string;
+            operation_id: string;
+            sop_item_id: string;
+            response: number;
+            remarks: string | null;
+            created_at: string;
+          }>();
+
+        const opDetail = {
+          ...mapOperationRow(row),
+          sopResponses: sopResponses.results.map((sr) => ({
+            id: sr.id,
+            operationId: sr.operation_id,
+            sopItemId: sr.sop_item_id,
+            response: sr.response,
+            remarks: sr.remarks,
+            createdAt: sr.created_at,
+          })),
+        };
+
+        return json({ operation: opDetail });
+      }
+
       return error(404, 'NOT_FOUND', 'Route not found.');
     } catch {
       console.error(JSON.stringify({ requestId, code: 'INTERNAL_ERROR' }));
@@ -1144,3 +1847,92 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
+
+function mapOperationRow(row: Record<string, unknown> | null) {
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    clientUuid: row.client_uuid as string,
+    stationId: row.station_id as string,
+    pumpId: row.pump_id as string,
+    userId: row.user_id as string,
+    operationType: row.operation_type as 'START' | 'STOP',
+    status: row.status as 'ACTIVE' | 'COMPLETED' | 'CANCELLED',
+    startedAt: row.started_at as string,
+    stoppedAt: (row.stopped_at as string) ?? null,
+    openingFlowMeter: Number(row.opening_flow_meter),
+    closingFlowMeter:
+      row.closing_flow_meter !== null && row.closing_flow_meter !== undefined
+        ? Number(row.closing_flow_meter)
+        : null,
+    openingEnergyMeter: Number(row.opening_energy_meter),
+    closingEnergyMeter:
+      row.closing_energy_meter !== null && row.closing_energy_meter !== undefined
+        ? Number(row.closing_energy_meter)
+        : null,
+    inletPressureStart:
+      row.inlet_pressure_start !== null && row.inlet_pressure_start !== undefined
+        ? Number(row.inlet_pressure_start)
+        : null,
+    inletPressureStop:
+      row.inlet_pressure_stop !== null && row.inlet_pressure_stop !== undefined
+        ? Number(row.inlet_pressure_stop)
+        : null,
+    outletPressureStart:
+      row.outlet_pressure_start !== null && row.outlet_pressure_start !== undefined
+        ? Number(row.outlet_pressure_start)
+        : null,
+    outletPressureStop:
+      row.outlet_pressure_stop !== null && row.outlet_pressure_stop !== undefined
+        ? Number(row.outlet_pressure_stop)
+        : null,
+    tankLevelStart:
+      row.tank_level_start !== null && row.tank_level_start !== undefined
+        ? Number(row.tank_level_start)
+        : null,
+    tankLevelStop:
+      row.tank_level_stop !== null && row.tank_level_stop !== undefined
+        ? Number(row.tank_level_stop)
+        : null,
+    shutdownReason: (row.shutdown_reason as string) ?? null,
+    remarks: (row.remarks as string) ?? null,
+    runningDurationSeconds:
+      row.running_duration_seconds !== null && row.running_duration_seconds !== undefined
+        ? Number(row.running_duration_seconds)
+        : null,
+    waterPumped:
+      row.water_pumped !== null && row.water_pumped !== undefined ? Number(row.water_pumped) : null,
+    energyUsedKwh:
+      row.energy_used_kwh !== null && row.energy_used_kwh !== undefined
+        ? Number(row.energy_used_kwh)
+        : null,
+    energyPerUnit:
+      row.energy_per_unit !== null && row.energy_per_unit !== undefined
+        ? Number(row.energy_per_unit)
+        : null,
+    version: Number(row.version ?? 1),
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+    pumpCode: (row.pump_code as string) ?? undefined,
+    pumpName: (row.pump_name as string) ?? undefined,
+    stationName: (row.station_name as string) ?? undefined,
+    operatorName: (row.operator_name as string) ?? undefined,
+  };
+}
+
+function mapPumpRow(row: Record<string, unknown> | null) {
+  if (!row) return null;
+  return {
+    id: row.id as string,
+    stationId: row.station_id as string,
+    code: row.code as string,
+    name: row.name as string,
+    ratedPowerKw: Number(row.rated_power_kw),
+    capacityM3H: Number(row.capacity_m3_h),
+    status: row.status as Pump['status'],
+    active: Boolean(row.active),
+    version: Number(row.version ?? 1),
+    createdAt: row.created_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}

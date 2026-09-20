@@ -73,6 +73,14 @@ Empty directories contain `.gitkeep` files so they are included in Git.
   - Reusable `SyncStatusBadge` component supporting all 6 states (`ONLINE`, `OFFLINE`, `SYNCING`, `PENDING`, `SYNCED`, `ERROR`).
   - Reusable `EmptyState` component for no-station, no-pumps, expired session, offline, and empty modules.
   - 43 automated tests passing with zero lint or type errors across all workspaces.
+- **Milestone 4 — Pump Operations (COMPLETE & VERIFIED)**:
+  - Migration `0002_pump_operations.sql` adding `pump_operations`, `sop_templates`, `sop_items`, `sop_responses`, with default Start/Stop checklists.
+  - Start Pump API (`POST /api/operations/start`): checks station access, enforces idle status, verifies required SOP checklist, prevents duplicate `client_uuid`, transitions pump to `RUNNING`, and records audit trail.
+  - Stop Pump API (`POST /api/operations/stop`): verifies active operation, validates closing meter $\ge$ opening meter, enforces stop checklist, calculates runtime, water pumped ($m^3$), energy used ($kWh$), specific energy ($kWh/m^3$), transitions pump to `STOPPED`, and records audit trail.
+  - Endpoints: `GET /api/operations`, `GET /api/operations/:id`, `GET /api/pumps/:id/active-operation`, and `GET /api/sop/templates`.
+  - Mobile Start Pump 2-step workflow (`apps/mobile/src/app/actions/start-pump.tsx`) with safety checklist, opening readings, and confirmation preview.
+  - Mobile Stop Pump workflow (`apps/mobile/src/app/actions/stop-pump.tsx`) with active running context, closing readings, calculation preview, and immediate pump card refresh.
+  - 65 automated tests passing (100%) with zero lint or type errors across all workspaces.
 
 ## Development commands
 

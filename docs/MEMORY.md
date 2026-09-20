@@ -83,7 +83,21 @@ Simple architecture > unnecessary complexity
   - Reusable `EmptyState` component covering no station assigned, no pumps, expired session, server unavailable, offline, unauthorized, and empty modules.
   - Stable route placeholders for upcoming operational workflows (`actions/[action].tsx`).
   - 43 automated tests across 5 suites (100% pass); zero lint errors; all workspaces build and typecheck cleanly.
-- **Milestone 4 (Day 4 — Pump Operations)**: Next milestone.
-  - Start/Stop Pump operational workflow.
-  - Standard Operating Procedure (SOP) checklist.
-  - Runtime, water, and energy calculations.
+- **Milestone 4 (Day 4 — Pump Operations) — COMPLETE & VERIFIED**:
+  - Implemented migration `0002_pump_operations.sql` creating `sop_templates`, `sop_items`, `pump_operations` (with partial unique index `idx_pump_active_operation` on `ACTIVE` operations), `sop_responses`, and default SOP seeds.
+  - Implemented Start Pump API (`POST /api/operations/start`): verifies station authorization, prevents start if pump is RUNNING/BREAKDOWN/MAINTENANCE, validates required SOP items, enforces numeric meter readings, handles idempotent retry by `client_uuid`, updates pump status to `RUNNING`, and records audit log.
+  - Implemented Stop Pump API (`POST /api/operations/stop`): verifies pump is currently `RUNNING` with an active start operation, enforces closing meter readings $\ge$ opening readings, enforces stop SOP checklist, performs authoritative calculations, transitions pump status to `STOPPED`, records audit log.
+  - Authoritative backend calculations:
+    - `running_duration_seconds = stopped_at - started_at`
+    - `water_pumped = closing_flow_meter - opening_flow_meter`
+    - `energy_used_kwh = closing_energy_meter - opening_energy_meter`
+    - `energy_per_unit = energy_used_kwh / water_pumped` (when `water_pumped > 0`, else `null`)
+  - Operational endpoints: `GET /api/operations` (with station, pump, status, and date filters), `GET /api/operations/:id` (with SOP responses), `GET /api/pumps/:id/active-operation`, and `GET /api/sop/templates`.
+  - Mobile Start Pump 2-step workflow (`apps/mobile/src/app/actions/start-pump.tsx`): Step 1 SOP safety checklist, Step 2 opening meter readings with confirmation modal and live pump refresh.
+  - Mobile Stop Pump workflow (`apps/mobile/src/app/actions/stop-pump.tsx`): lists running pumps, shows live elapsed duration, requires closing readings, stop checklist, shutdown reason, live calculation preview, and updates status to `STOPPED`.
+  - 65 automated tests across 6 test suites (100% pass); zero lint errors; all workspaces build and typecheck cleanly.
+- **Meter Unit Assumptions (Permanent Decision)**:
+  - Flow meter values are assumed to represent cubic meters ($m^3$, equivalent to kiloliters $kL$). Raw meter reading difference (`closing_flow_meter - opening_flow_meter`) represents water pumped volume in $m^3$.
+  - Energy meter values are assumed to represent kilowatt-hours ($kWh$). Raw meter reading difference (`closing_energy_meter - opening_energy_meter`) represents electrical energy consumption in $kWh$.
+  - Specific energy consumption is expressed in $kWh/m^3$. If water pumped is 0, specific energy is safely stored and returned as `null`.
+- **Next Milestone**: Milestone 5 (Day 5 — Readings). Offline sync queue, reading forms, GPS geolocation, and photo capture.
